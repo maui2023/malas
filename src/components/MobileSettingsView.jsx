@@ -13,7 +13,9 @@ import {
   ChevronRight,
   RefreshCw,
   Loader2,
-  ChevronDown
+  ChevronDown,
+  Download,
+  Smartphone
 } from 'lucide-react';
 import {
   STORAGE_KEYS,
@@ -36,6 +38,9 @@ export default function MobileSettingsView({
   onOpenConnector,
   onOpenSettings,
   onOpenExportImport,
+  onOpenInstall,
+  isInstalled = false,
+  isInstallable = false,
 }) {
   const [authStatus, setAuthStatus] = useState(AUTH_STATUS.DISCONNECTED);
   const [tokenRemaining, setTokenRemaining] = useState(0);
@@ -353,6 +358,55 @@ export default function MobileSettingsView({
           <span>Tetapan Kunci API & Model</span>
         </button>
       </div>
+
+      {/* PWA App Installation Card */}
+      {onOpenInstall && (
+        <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800 mb-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Smartphone className="w-4 h-4 text-emerald-400" />
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                Aplikasi Web (PWA)
+              </span>
+            </div>
+            <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border flex items-center gap-1 ${
+              isInstalled
+                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                : 'bg-teal-500/10 border-teal-500/30 text-teal-300'
+            }`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${isInstalled ? 'bg-emerald-400' : 'bg-teal-400'}`} />
+              {isInstalled ? 'Telah Dipasang' : 'Boleh Dipasang'}
+            </span>
+          </div>
+
+          <p className="text-[11px] text-slate-400 leading-relaxed">
+            {isInstalled
+              ? 'Aplikasi sedang berjalan dalam mod aplikasi kendiri penuh (Standalone) tanpa bar pelayar.'
+              : 'Pasang malas terus ke skrin utama telefon anda untuk capaian pantas dan storan luar talian.'}
+          </p>
+
+          <button
+            onClick={onOpenInstall}
+            className={`w-full py-2.5 px-4 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition active:scale-98 ${
+              isInstalled
+                ? 'bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200'
+                : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold shadow-md shadow-emerald-500/20'
+            }`}
+          >
+            {isInstalled ? (
+              <>
+                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                <span>Maklumat & Status Aplikasi</span>
+              </>
+            ) : (
+              <>
+                <Download className="w-4 h-4" />
+                <span>Pasang Aplikasi (Install App)</span>
+              </>
+            )}
+          </button>
+        </div>
+      )}
 
       {/* More Options / Backup */}
       <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800 mb-4 space-y-2">

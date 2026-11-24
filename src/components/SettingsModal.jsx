@@ -16,7 +16,9 @@ import {
   AlertCircle,
   Loader2,
   Layers,
-  ChevronDown
+  ChevronDown,
+  Download,
+  Smartphone
 } from 'lucide-react';
 import {
   STORAGE_KEYS,
@@ -30,7 +32,13 @@ import {
   validateApiKeyAndPull
 } from '../services/aiModels';
 
-export default function SettingsModal({ isOpen, onClose }) {
+export default function SettingsModal({
+  isOpen,
+  onClose,
+  onOpenInstall,
+  isInstalled = false,
+  isInstallable = false
+}) {
   if (!isOpen) return null;
 
   const [provider, setProvider] = useState('gemini');
@@ -470,6 +478,53 @@ export default function SettingsModal({ isOpen, onClose }) {
             className="rounded border-slate-700 text-emerald-500 focus:ring-emerald-500 bg-slate-900 w-4 h-4 cursor-pointer"
           />
         </div>
+
+        {/* PWA Section */}
+        {onOpenInstall && (
+          <div className="mt-4 p-3.5 bg-slate-950/60 border border-slate-800 rounded-xl flex items-center justify-between">
+            <div className="space-y-0.5 pr-2">
+              <div className="flex items-center gap-1.5">
+                <Smartphone className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="text-xs font-semibold text-slate-200">
+                  Aplikasi Web (PWA)
+                </span>
+                <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full border ${
+                  isInstalled
+                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                    : 'bg-teal-500/10 border-teal-500/30 text-teal-300'
+                }`}>
+                  {isInstalled ? 'Dipasang' : 'Tersedia'}
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-400">
+                {isInstalled
+                  ? 'Aplikasi berjalan dalam mod standalone dengan aset disimpan setempat.'
+                  : 'Pasang sebagai aplikasi kendiri pada Windows, Mac, Linux, Android atau iOS.'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onOpenInstall}
+              className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition active:scale-95 ${
+                isInstalled
+                  ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'
+                  : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold shadow-sm shadow-emerald-500/20'
+              }`}
+            >
+              {isInstalled ? (
+                <>
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Info App</span>
+                </>
+              ) : (
+                <>
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Pasang App</span>
+                </>
+              )}
+            </button>
+          </div>
+        )}
 
         {/* System Prompt */}
         <div className="mt-6 space-y-2">

@@ -6,7 +6,8 @@ import {
   FileJson,
   Plus,
   RefreshCw,
-  ExternalLink
+  ExternalLink,
+  Download
 } from 'lucide-react';
 import {
   STORAGE_KEYS,
@@ -24,8 +25,11 @@ export default function Header({
   onOpenConnector,
   onOpenSettings,
   onOpenExportImport,
+  onOpenInstall,
   onNewChat,
   activeMobileTab = 'chat',
+  isInstalled = false,
+  isInstallable = false,
 }) {
   const [authStatus, setAuthStatus] = useState(AUTH_STATUS.DISCONNECTED);
   const [tokenRemaining, setTokenRemaining] = useState(0);
@@ -88,7 +92,23 @@ export default function Header({
       </div>
 
       {/* Mobile Top Controls (Only on mobile < md) */}
-      <div className="flex md:hidden items-center gap-2">
+      <div className="flex md:hidden items-center gap-1.5">
+        {/* PWA Install Button Mobile */}
+        {onOpenInstall && (
+          <button
+            onClick={onOpenInstall}
+            className={`flex items-center gap-1 px-2 py-1.5 rounded-xl border transition text-[11px] font-semibold active:scale-95 ${
+              isInstalled
+                ? 'bg-slate-950/80 border-slate-800 text-slate-400'
+                : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20'
+            }`}
+            title={isInstalled ? 'Aplikasi malas (Dipasang)' : 'Pasang malas sebagai App'}
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>{isInstalled ? 'App' : 'Install'}</span>
+          </button>
+        )}
+
         {/* Google Status Badge Mobile */}
         <button
           onClick={onOpenConnector}
@@ -117,6 +137,21 @@ export default function Header({
 
       {/* Desktop Status Badges & Controls (md:flex) */}
       <div className="hidden md:flex items-center gap-2 md:gap-3">
+        {/* PWA Install App Button Desktop */}
+        {onOpenInstall && (
+          <button
+            onClick={onOpenInstall}
+            title={isInstalled ? 'Aplikasi malas (Dipasang)' : 'Pasang malas sebagai Aplikasi (PWA)'}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl transition text-xs font-semibold active:scale-95 border ${
+              isInstalled
+                ? 'bg-slate-950/80 border-slate-800 text-slate-300 hover:text-white hover:border-slate-700'
+                : 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border-emerald-500/25 shadow-sm shadow-emerald-500/10'
+            }`}
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>{isInstalled ? 'App Mode' : 'Install App'}</span>
+          </button>
+        )}
         
         {/* Google Workspace Pill */}
         <button

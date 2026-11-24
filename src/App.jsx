@@ -10,6 +10,8 @@ import ConnectorModal from './components/ConnectorModal';
 import SettingsModal from './components/SettingsModal';
 import ExportImportModal from './components/ExportImportModal';
 import HeadlessView from './components/HeadlessView';
+import InstallModal from './components/InstallModal';
+import { usePwaInstall } from './hooks/usePwaInstall';
 import { db } from './services/localDb';
 
 export default function App() {
@@ -17,10 +19,24 @@ export default function App() {
   const [isConnectorOpen, setIsConnectorOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isExportImportOpen, setIsExportImportOpen] = useState(false);
+  const [isInstallOpen, setIsInstallOpen] = useState(false);
   const [selectedPrompt, setSelectedPrompt] = useState('');
   const [sessionKey, setSessionKey] = useState(Date.now());
   const [mobileTab, setMobileTab] = useState('chat'); // 'chat' | 'workflows' | 'storage' | 'settings'
   const [isAgentRunning, setIsAgentRunning] = useState(false);
+
+  const { isInstallable, isInstalled, isIOS, promptInstall } = usePwaInstall();
+
+  const handleOpenInstall = async () => {
+    if (isInstallable) {
+      const accepted = await promptInstall();
+      if (!accepted) {
+        setIsInstallOpen(true);
+      }
+    } else {
+      setIsInstallOpen(true);
+    }
+  };
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -58,8 +74,11 @@ export default function App() {
         onOpenConnector={() => setIsConnectorOpen(true)}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenExportImport={() => setIsExportImportOpen(true)}
+        onOpenInstall={handleOpenInstall}
         onNewChat={handleNewChat}
         activeMobileTab={mobileTab}
+        isInstalled={isInstalled}
+        isInstallable={isInstallable}
       />
 
       {/* Main Layout Area:
@@ -112,6 +131,9 @@ export default function App() {
             onOpenConnector={() => setIsConnectorOpen(true)}
             onOpenSettings={() => setIsSettingsOpen(true)}
             onOpenExportImport={() => setIsExportImportOpen(true)}
+            onOpenInstall={handleOpenInstall}
+            isInstalled={isInstalled}
+            isInstallable={isInstallable}
           />
         </div>
 
@@ -133,12 +155,26 @@ export default function App() {
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
+        onOpenInstall={handleOpenInstall}
+        isInstalled={isInstalled}
+        isInstallable={isInstallable}
       />
 
       <ExportImportModal
         isOpen={isExportImportOpen}
         onClose={() => setIsExportImportOpen(false)}
         onResetComplete={handleNewChat}
+      />
+
+      <InstallModal
+        isOpen={isInstallOpen}
+        onClose={() => setIsInstallOpen(false)}
+        isInstallable={isInstallable}
+        isInstalled={isInstalled}
+        isIOS={isIOS}
+        onInstall={async () => {
+          await promptInstall();
+        }}
       />
 
     </div>
