@@ -10,7 +10,13 @@ import {
   Webhook,
   Check,
   ExternalLink,
-  ShieldAlert
+  ShieldAlert,
+  RefreshCw,
+  CheckCircle2,
+  AlertCircle,
+  Loader2,
+  Layers,
+  ChevronDown
 } from 'lucide-react';
 import {
   STORAGE_KEYS,
@@ -18,6 +24,11 @@ import {
   setSetting,
   DEFAULT_SYSTEM_PROMPT
 } from '../services/localDb';
+import {
+  DEFAULT_MODELS,
+  fetchModelsFromProvider,
+  validateApiKeyAndPull
+} from '../services/aiModels';
 
 export default function SettingsModal({ isOpen, onClose }) {
   if (!isOpen) return null;
@@ -32,18 +43,68 @@ export default function SettingsModal({ isOpen, onClose }) {
   const [autoSendHeadless, setAutoSendHeadless] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
 
+  // Model pulling & validation states
+  const [availableModels, setAvailableModels] = useState([]);
+  const [isPulling, setIsPulling] = useState(false);
+  const [pullStatus, setPullStatus] = useState(null); // { type: 'success' | 'error', text: '' }
+  const [isCustomModel, setIsCustomModel] = useState(false);
+  const [customModelText, setCustomModelText] = useState('');
+
   useEffect(() => {
-    setProvider(getSetting(STORAGE_KEYS.AI_PROVIDER, 'gemini'));
-    setApiKey(getSetting(STORAGE_KEYS.AI_API_KEY, ''));
-    setModel(getSetting(STORAGE_KEYS.AI_MODEL, 'gemini-2.5-flash'));
-    setEndpoint(getSetting(STORAGE_KEYS.AI_ENDPOINT, ''));
-    setSystemPrompt(getSetting(STORAGE_KEYS.AI_SYSTEM_PROMPT, DEFAULT_SYSTEM_PROMPT));
-    setWebhookUrl(getSetting(STORAGE_KEYS.WEBHOOK_URL, ''));
-    setAutoSendHeadless(getSetting(STORAGE_KEYS.AUTO_SEND_HEADLESS, false));
+    const curProvider = getSetting(STORAGE_KEYS.AI_PROVIDER, 'gemini');
+    const curKey = getSetting(STORAGE_KEYS.AI_API_KEY, '');
+    const curModel = getSetting(STORAGE_KEYS.AI_MODEL, curProvider === 'gemini' ? 'gemini-2.5-flash' : 'gpt-4o-mini');
+    const curEndpoint = getSetting(STORAGE_KEYS.AI_ENDPOINT, '');
+    const curPrompt = getSetting(STORAGE_KEYS.AI_SYSTEM_PROMPT, DEFAULT_SYSTEM_PROMPT);
+    const curWebhook = getSetting(STORAGE_KEYS.WEBHOOK_URL, '');
+    const curAutoSend = getSetting(STORAGE_KEYS.AUTO_SEND_HEADLESS, false);
+    const cachedModels = getSetting(STORAGE_KEYS.AI_MODELS_CACHE, null);
+    const keyStatus = getSetting(STORAGE_KEYS.AI_KEY_STATUS, '');
+
+    setProvider(curProvider);
+    setApiKey(curKey);
+    setEndpoint(curEndpoint);
+    setSystemPrompt(curPrompt);
+    setWebhookUrl(curWebhook);
+    setAutoSendHeadless(curAutoSend);
+
+    // Initialize model list from cache or defaults
+    const defaultList = DEFAULT_MODELS[curProvider] || [];
+    let initialList = defaultList;
+    if (Array.isArray(cachedModels) && cachedModels.length > 0) {
+      initialList = cachedModels;
+    }
+    setAvailableModels(initialList);
+
+    // Check if current model exists in initial list
+    const found = initialList.some((m) => m.id === curModel);
+    if (found || !curModel) {
+      setModel(curModel || (initialList[0]?.id || 'gemini-2.5-flash'));
+      setIsCustomModel(false);
+    } else {
+      setModel('__custom__');
+      setIsCustomModel(true);
+      setCustomModelText(curModel);
+    }
+
+    if (keyStatus === 'connected' && curKey) {
+      setPullStatus({ type: 'success', text: `Kunci tersambung (${initialList.length} model sedia ada)` });
+    } else if (keyStatus === 'invalid') {
+      setPullStatus({ type: 'error', text: 'Kunci API sebelum ini gagal disahkan.' });
+    } else {
+      setPullStatus(null);
+    }
   }, [isOpen]);
 
   const handleProviderChange = (newProvider) => {
     setProvider(newProvider);
+    setPullStatus(null);
+    setIsCustomModel(false);
+    setCustomModelText('');
+
+    const defaults = DEFAULT_MODELS[newProvider] || [];
+    setAvailableModels(defaults);
+
     if (newProvider === 'gemini') {
       setModel('gemini-2.5-flash');
       setEndpoint('');
@@ -56,20 +117,106 @@ export default function SettingsModal({ isOpen, onClose }) {
     }
   };
 
-  const handleSave = () => {
+  // Pull real-time model list from provider using API key
+  const handlePullModels = async (keyOverride = null) => {
+    const keyToUse = (keyOverride !== null ? keyOverride : apiKey).trim();
+    if (!keyToUse) {
+      setPullStatus({
+        type: 'error',
+        text: 'Sila masukkan Kunci API terlebih dahulu sebelum menarik senarai model.'
+      });
+      return false;
+    }
+
+    setIsPulling(true);
+    setPullStatus(null);
+
+    const result = await validateApiKeyAndPull({
+      provider,
+      apiKey: keyToUse,
+      endpoint
+    });
+
+    setIsPulling(false);
+
+    if (result.success && Array.isArray(result.models) && result.models.length > 0) {
+      setAvailableModels(result.models);
+      setSetting(STORAGE_KEYS.AI_MODELS_CACHE, result.models);
+      setSetting(STORAGE_KEYS.AI_KEY_STATUS, 'connected');
+
+      // If current model is not in list, select recommended or first
+      const stillValid = result.models.some((m) => m.id === model);
+      if (!stillValid && !isCustomModel) {
+        const recommended = result.models.find((m) => m.recommended) || result.models[0];
+        if (recommended) setModel(recommended.id);
+      }
+
+      setPullStatus({
+        type: 'success',
+        text: `Berjaya bersambung! ${result.count} model ditarik terus daripada ${provider === 'gemini' ? 'Google Gemini' : provider}.`
+      });
+      return true;
+    } else {
+      setSetting(STORAGE_KEYS.AI_KEY_STATUS, 'invalid');
+      setPullStatus({
+        type: 'error',
+        text: result.error || 'Gagal menarik senarai model. Sila semak Kunci API anda.'
+      });
+      return false;
+    }
+  };
+
+  const handleModelSelectChange = (e) => {
+    const val = e.target.value;
+    if (val === '__custom__') {
+      setIsCustomModel(true);
+      setModel('__custom__');
+    } else {
+      setIsCustomModel(false);
+      setModel(val);
+    }
+  };
+
+  const handleSave = async () => {
+    const trimmedKey = apiKey.trim();
+    const effectiveModel = isCustomModel ? customModelText.trim() : model.trim();
+
+    if (!effectiveModel) {
+      setPullStatus({ type: 'error', text: 'Sila pilih atau masukkan nama model.' });
+      return;
+    }
+
+    // If key is present and hasn't been verified yet (or user just typed it without pulling),
+    // let's auto-verify and pull models immediately so user is 100% connected
+    if (trimmedKey && pullStatus?.type !== 'success') {
+      setIsPulling(true);
+      const isOk = await handlePullModels(trimmedKey);
+      if (!isOk) {
+        // Validation failed, let user see error
+        return;
+      }
+    }
+
+    // Save configuration
     setSetting(STORAGE_KEYS.AI_PROVIDER, provider);
-    setSetting(STORAGE_KEYS.AI_API_KEY, apiKey.trim());
-    setSetting(STORAGE_KEYS.AI_MODEL, model.trim());
+    setSetting(STORAGE_KEYS.AI_API_KEY, trimmedKey);
+    setSetting(STORAGE_KEYS.AI_MODEL, effectiveModel);
     setSetting(STORAGE_KEYS.AI_ENDPOINT, endpoint.trim());
     setSetting(STORAGE_KEYS.AI_SYSTEM_PROMPT, systemPrompt.trim());
     setSetting(STORAGE_KEYS.WEBHOOK_URL, webhookUrl.trim());
     setSetting(STORAGE_KEYS.AUTO_SEND_HEADLESS, autoSendHeadless);
 
+    if (trimmedKey) {
+      setSetting(STORAGE_KEYS.AI_KEY_STATUS, 'connected');
+    } else {
+      setSetting(STORAGE_KEYS.AI_KEY_STATUS, 'disconnected');
+    }
+
     setSavedSuccess(true);
     setTimeout(() => {
       setSavedSuccess(false);
       onClose();
-    }, 800);
+    }, 700);
   };
 
   return (
@@ -83,8 +230,8 @@ export default function SettingsModal({ isOpen, onClose }) {
               <Bot className="w-6 h-6" />
             </div>
             <div>
-              <h2 className="text-xl font-bold tracking-tight text-white">AI Provider & Workspace Settings</h2>
-              <p className="text-xs text-slate-400">BYOK (Bring Your Own Key) &bull; Zero Server Storage</p>
+              <h2 className="text-xl font-bold tracking-tight text-white">Tetapan Kunci API & Model</h2>
+              <p className="text-xs text-slate-400">BYOK (Bring Your Own Key) &bull; 100% Client-Side & Direct API</p>
             </div>
           </div>
           <button
@@ -98,11 +245,11 @@ export default function SettingsModal({ isOpen, onClose }) {
         {/* AI Provider Tabs */}
         <div className="mt-6 space-y-2">
           <label className="text-xs font-semibold text-slate-300 uppercase tracking-wider block">
-            AI Provider
+            Pilih AI Provider
           </label>
           <div className="grid grid-cols-3 gap-2">
             {[
-              { id: 'gemini', label: 'Google Gemini', badge: 'Recommended' },
+              { id: 'gemini', label: 'Google Gemini', badge: 'Disyorkan' },
               { id: 'openai', label: 'OpenAI', badge: 'Direct API' },
               { id: 'openrouter', label: 'OpenRouter', badge: 'Multi-LLM' },
             ].map((p) => (
@@ -123,11 +270,11 @@ export default function SettingsModal({ isOpen, onClose }) {
           </div>
         </div>
 
-        {/* API Key */}
+        {/* API Key Section */}
         <div className="mt-6 space-y-2">
           <div className="flex items-center justify-between">
             <label className="text-xs font-semibold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
-              <span>{provider.toUpperCase()} API Key</span>
+              <span>Kunci API {provider.toUpperCase()}</span>
             </label>
             {provider === 'gemini' && (
               <a
@@ -136,7 +283,7 @@ export default function SettingsModal({ isOpen, onClose }) {
                 rel="noreferrer"
                 className="text-emerald-400 hover:underline flex items-center gap-1 text-xs"
               >
-                Get Free Gemini API Key <ExternalLink className="w-3 h-3" />
+                Dapatkan Kunci Percuma di AI Studio <ExternalLink className="w-3 h-3" />
               </a>
             )}
             {provider === 'openai' && (
@@ -146,7 +293,7 @@ export default function SettingsModal({ isOpen, onClose }) {
                 rel="noreferrer"
                 className="text-emerald-400 hover:underline flex items-center gap-1 text-xs"
               >
-                Get OpenAI Key <ExternalLink className="w-3 h-3" />
+                Dapatkan OpenAI Key <ExternalLink className="w-3 h-3" />
               </a>
             )}
             {provider === 'openrouter' && (
@@ -156,7 +303,7 @@ export default function SettingsModal({ isOpen, onClose }) {
                 rel="noreferrer"
                 className="text-emerald-400 hover:underline flex items-center gap-1 text-xs"
               >
-                Get OpenRouter Key <ExternalLink className="w-3 h-3" />
+                Dapatkan OpenRouter Key <ExternalLink className="w-3 h-3" />
               </a>
             )}
           </div>
@@ -166,8 +313,11 @@ export default function SettingsModal({ isOpen, onClose }) {
             <input
               type={showApiKey ? 'text' : 'password'}
               value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder={`Enter your ${provider === 'gemini' ? 'AI Studio' : provider} API key`}
+              onChange={(e) => {
+                setApiKey(e.target.value);
+                setPullStatus(null);
+              }}
+              placeholder={`Masukkan Kunci API ${provider === 'gemini' ? 'Google AI Studio' : provider}`}
               className="w-full pl-10 pr-12 py-2.5 bg-slate-950 border border-slate-800 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 rounded-xl text-xs font-mono text-slate-100 placeholder-slate-600 outline-none transition"
             />
             <button
@@ -178,35 +328,96 @@ export default function SettingsModal({ isOpen, onClose }) {
               {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
           </div>
-          <p className="text-xs text-slate-400">
-            Stored locally in browser <code>localStorage</code>. Direct client-side calls to official APIs.
-          </p>
+
+          {/* Pull Models / Verify Key Action Bar */}
+          <div className="pt-1 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-[11px] text-slate-400">
+              Disimpan secara lokal dalam pelayar (browser) anda.
+            </p>
+
+            <button
+              type="button"
+              disabled={isPulling || !apiKey.trim()}
+              onClick={() => handlePullModels()}
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition ${
+                !apiKey.trim()
+                  ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                  : 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 active:scale-95'
+              }`}
+            >
+              {isPulling ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Menarik Senarai Model...</span>
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Tarik Senarai Model & Uji Sambungan</span>
+                </>
+              )}
+            </button>
+          </div>
+
+          {/* Pull / Verification Status Banner */}
+          {pullStatus && (
+            <div
+              className={`mt-2 p-3 rounded-xl border text-xs flex items-start gap-2.5 animate-fadeIn ${
+                pullStatus.type === 'success'
+                  ? 'bg-emerald-950/30 border-emerald-500/30 text-emerald-300'
+                  : 'bg-rose-950/30 border-rose-500/30 text-rose-300'
+              }`}
+            >
+              {pullStatus.type === 'success' ? (
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+              ) : (
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+              )}
+              <div className="flex-1 leading-relaxed">{pullStatus.text}</div>
+            </div>
+          )}
         </div>
 
         {/* Model Selection */}
         <div className="mt-6 space-y-2">
-          <label className="text-xs font-semibold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
-            <Sliders className="w-3.5 h-3.5 text-slate-400" />
-            <span>Model Name</span>
-          </label>
-          {provider === 'gemini' ? (
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-semibold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+              <Sliders className="w-3.5 h-3.5 text-slate-400" />
+              <span>Pilihan Model ({availableModels.length} Tersedia)</span>
+            </label>
+            <span className="text-[11px] text-slate-400">
+              {provider === 'gemini' ? 'Gemini 2.5 Flash disyorkan' : ''}
+            </span>
+          </div>
+
+          <div className="relative">
             <select
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              className="w-full px-3 py-2.5 bg-slate-950 border border-slate-800 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 rounded-xl text-xs font-mono text-slate-100 outline-none transition"
+              value={isCustomModel ? '__custom__' : model}
+              onChange={handleModelSelectChange}
+              className="w-full px-3 py-2.5 bg-slate-950 border border-slate-800 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 rounded-xl text-xs font-mono text-slate-100 outline-none transition appearance-none cursor-pointer pr-10"
             >
-              <option value="gemini-2.5-flash">gemini-2.5-flash (Fastest & Best Tool Calling)</option>
-              <option value="gemini-1.5-flash">gemini-1.5-flash</option>
-              <option value="gemini-1.5-pro">gemini-1.5-pro</option>
+              {availableModels.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.id} {m.desc ? `— ${m.desc}` : ''}
+                </option>
+              ))}
+              <option value="__custom__">✍️ Masukkan model lain (Custom)...</option>
             </select>
-          ) : (
-            <input
-              type="text"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              placeholder="e.g. gpt-4o-mini, google/gemini-2.5-flash"
-              className="w-full px-3 py-2.5 bg-slate-950 border border-slate-800 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 rounded-xl text-xs font-mono text-slate-100 outline-none transition"
-            />
+            <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" />
+          </div>
+
+          {/* Custom Model Input if selected */}
+          {isCustomModel && (
+            <div className="mt-2 space-y-1 animate-fadeIn">
+              <label className="text-[11px] text-slate-400 block">Nama Model Tersuai:</label>
+              <input
+                type="text"
+                value={customModelText}
+                onChange={(e) => setCustomModelText(e.target.value)}
+                placeholder="Contoh: gemini-2.5-flash atau gpt-4o"
+                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 rounded-xl text-xs font-mono text-slate-100 outline-none transition"
+              />
+            </div>
           )}
         </div>
 
@@ -230,26 +441,26 @@ export default function SettingsModal({ isOpen, onClose }) {
         <div className="mt-6 space-y-2">
           <label className="text-xs font-semibold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
             <Webhook className="w-3.5 h-3.5 text-slate-400" />
-            <span>Headless Webhook Notification URL (Optional)</span>
+            <span>Headless Webhook Notification URL (Pilihan)</span>
           </label>
           <input
             type="url"
             value={webhookUrl}
             onChange={(e) => setWebhookUrl(e.target.value)}
-            placeholder="https://discord.com/api/webhooks/... or Telegram Bot webhook"
+            placeholder="https://discord.com/api/webhooks/... atau webhook Telegram"
             className="w-full px-3 py-2.5 bg-slate-950 border border-slate-800 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 rounded-xl text-xs font-mono text-slate-100 outline-none transition"
           />
           <p className="text-xs text-slate-400">
-            When running in headless mode (<code>?headless=true</code>), the task output summary will be POSTed to this URL.
+            Apabila berjalan dalam mod headless (<code>?headless=true</code>), ringkasan tugasan akan dihantar ke webhook ini.
           </p>
         </div>
 
         {/* Auto Send in Headless checkbox */}
         <div className="mt-4 p-3 bg-slate-950/60 border border-slate-800 rounded-xl flex items-center justify-between">
           <div>
-            <span className="text-xs font-semibold text-slate-200">Allow Headless Auto-Send</span>
+            <span className="text-xs font-semibold text-slate-200">Benarkan Auto-Send dalam Headless</span>
             <p className="text-[11px] text-slate-400">
-              If enabled, automated CLI/cron scripts can send replies without human interactive confirmation.
+              Jika aktif, skrip CLI/cron automatik boleh menghantar balasan tanpa pengesahan butang manual.
             </p>
           </div>
           <input
@@ -272,7 +483,7 @@ export default function SettingsModal({ isOpen, onClose }) {
               onClick={() => setSystemPrompt(DEFAULT_SYSTEM_PROMPT)}
               className="text-[11px] text-emerald-400 hover:underline"
             >
-              Reset to default
+              Kembalikan Asal
             </button>
           </div>
           <textarea
@@ -289,19 +500,24 @@ export default function SettingsModal({ isOpen, onClose }) {
             onClick={onClose}
             className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white transition"
           >
-            Cancel
+            Batal
           </button>
           <button
             onClick={handleSave}
-            className="px-5 py-2.5 text-xs font-bold text-slate-950 bg-emerald-400 hover:bg-emerald-300 active:scale-95 rounded-xl shadow-lg shadow-emerald-500/20 transition flex items-center gap-2"
+            disabled={isPulling}
+            className="px-5 py-2.5 text-xs font-bold text-slate-950 bg-emerald-400 hover:bg-emerald-300 active:scale-95 rounded-xl shadow-lg shadow-emerald-500/20 transition flex items-center gap-2 disabled:opacity-50"
           >
             {savedSuccess ? (
               <>
-                <Check className="w-4 h-4 text-slate-950" /> Saved!
+                <Check className="w-4 h-4 text-slate-950" /> Tersimpan!
+              </>
+            ) : isPulling ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin text-slate-950" /> Mengesahkan...
               </>
             ) : (
               <>
-                <Check className="w-4 h-4" /> Save Configuration
+                <Check className="w-4 h-4" /> Simpan Konfigurasi
               </>
             )}
           </button>

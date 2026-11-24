@@ -8,11 +8,13 @@ import {
   Zap,
   Mail,
   ShieldAlert,
-  ArrowRight
+  ArrowRight,
+  AlertTriangle,
+  ExternalLink
 } from 'lucide-react';
 import ActionCard from './ActionCard';
 import { runAgentWorkflow } from '../services/aiAgent';
-import { db } from '../services/localDb';
+import { db, STORAGE_KEYS, getSetting } from '../services/localDb';
 import { getAuthStatus, AUTH_STATUS } from '../services/googleAuth';
 
 const QUICK_CHIPS = [
@@ -21,6 +23,36 @@ const QUICK_CHIPS = [
   "Find all invoices/receipts this month and summarize totals",
   "Clean up & archive promotional unread emails"
 ];
+
+function extractConsoleUrl(text) {
+  if (!text) return null;
+  const match = text.match(/https:\/\/(?:console\.developers\.google\.com|console\.cloud\.google\.com)\/[^\s)>]+/i);
+  return match ? match[0] : null;
+}
+
+function renderFormattedContent(text) {
+  if (!text) return null;
+  const urlRegex = /(https?:\/\/[^\s<)]+)/g;
+  const parts = text.split(urlRegex);
+
+  return parts.map((part, index) => {
+    if (part.match(urlRegex)) {
+      return (
+        <a
+          key={index}
+          href={part}
+          target="_blank"
+          rel="noreferrer"
+          className="text-emerald-400 hover:text-emerald-300 underline font-medium break-all inline-flex items-center gap-0.5"
+        >
+          <span>{part}</span>
+          <ExternalLink className="w-3 h-3 inline shrink-0" />
+        </a>
+      );
+    }
+    return part;
+  });
+}
 
 export default function WorkspaceChat({
   externalPrompt,
@@ -93,6 +125,19 @@ export default function WorkspaceChat({
         id: Date.now(),
         role: 'assistant',
         content: `⚠️ **Google Workspace belum disambungkan atau token telah tamat tempoh.**\n\nSila klik butang **Connect Google** di bahagian atas atau buka menu Sambungan untuk sambungkan akaun Gmail anda.`,
+        actionCards: []
+      };
+      setMessages(prev => [...prev, warningMsg]);
+      return;
+    }
+
+    const apiKey = getSetting(STORAGE_KEYS.AI_API_KEY, '');
+    const provider = getSetting(STORAGE_KEYS.AI_PROVIDER, 'gemini');
+    if (!apiKey) {
+      const warningMsg = {
+        id: Date.now(),
+        role: 'assistant',
+        content: `⚠️ **Kunci API ${provider.toUpperCase()} belum dimasukkan.**\n\nSila buka **Tetapan Kunci API & Model** di bahagian bawah untuk memasukkan Kunci API dan menarik senarai model yang sedia ada.`,
         actionCards: []
       };
       setMessages(prev => [...prev, warningMsg]);
@@ -198,10 +243,51 @@ export default function WorkspaceChat({
                 ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/10'
                 : 'bg-slate-900/90 border border-slate-800 text-slate-200 shadow-md'
             }`}>
-              {/* Message text with basic Markdown formatting */}
+              {/* Message text with basic Markdown & link formatting */}
               <div className="whitespace-pre-wrap space-y-2">
-                {msg.content}
+                {renderFormattedContent(msg.content)}
               </div>
+
+              {/* Detected Gmail API Disabled Warning Card */}
+              {(() => {
+                const consoleUrl = extractConsoleUrl(msg.content);
+                const isApiDisabledMsg =
+                  msg.role === 'assistant' &&
+                  (Boolean(consoleUrl) ||
+                   msg.content.includes('Gmail API tidak didayakan') ||
+                   msg.content.includes('Gmail API belum didayakan') ||
+                   msg.content.includes('Gmail API has not been used'));
+
+                if (!isApiDisabledMsg) return null;
+
+                const targetUrl = consoleUrl || `https://console.developers.google.com/apis/api/gmail.googleapis.com/overview?project=1077153893867`;
+
+                return (
+                  <div className="mt-3.5 p-3.5 bg-gradient-to-r from-amber-950/40 to-slate-900 border border-amber-500/30 rounded-xl space-y-2.5">
+                    <div className="flex items-center gap-2 text-amber-300 font-bold text-xs">
+                      <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                      <span>Tindakan Diperlukan: Dayakan Gmail API</span>
+                    </div>
+                    <p className="text-slate-300 text-xs leading-normal">
+                      Akaun Google anda sudah berjaya bersambung, tetapi perkhidmatan <b>Gmail API</b> belum diaktifkan dalam projek Google Cloud ini.
+                    </p>
+                    <div className="pt-1">
+                      <a
+                        href={targetUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 font-bold text-xs rounded-xl shadow-md shadow-amber-500/20 transition"
+                      >
+                        <span>Buka Google Cloud Console & Dayakan API</span>
+                        <ExternalLink className="w-3.5 h-3.5" />
+                      </a>
+                    </div>
+                    <p className="text-[11px] text-slate-400">
+                      💡 Selepas klik <b>ENABLE</b> di Google Cloud Console, tunggu 1-2 minit dan anda boleh terus bertanya semula kepada AI di sini tanpa perlu log keluar.
+                    </p>
+                  </div>
+                );
+              })()}
 
               {/* Action Cards (Draft / Confirm Send) */}
               {msg.actionCards && msg.actionCards.length > 0 && (

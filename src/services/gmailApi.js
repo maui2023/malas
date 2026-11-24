@@ -1,4 +1,4 @@
-import { getAccessToken } from './localDb';
+import { getAccessToken, STORAGE_KEYS, getSetting, setSetting } from './localDb';
 import { db } from './localDb';
 
 const GMAIL_BASE_URL = 'https://gmail.googleapis.com/gmail/v1/users/me';
@@ -64,6 +64,29 @@ async function gmailFetch(endpoint, options = {}) {
     } catch {
       errorDetail = response.statusText;
     }
+
+    // Detect Google Cloud API disabled / not enabled error
+    if (
+      response.status === 403 &&
+      (errorDetail.includes('has not been used in project') ||
+       errorDetail.includes('is disabled') ||
+       errorDetail.includes('it is disabled') ||
+       errorDetail.includes('not enabled'))
+    ) {
+      const match = errorDetail.match(/project[ =:]+(\d+)/i) || errorDetail.match(/project (\d+)/i);
+      const projId = match ? match[1] : '';
+      const activationUrl = projId
+        ? `https://console.developers.google.com/apis/api/gmail.googleapis.com/overview?project=${projId}`
+        : 'https://console.developers.google.com/apis/api/gmail.googleapis.com/overview';
+
+      setSetting(STORAGE_KEYS.GMAIL_API_STATUS, 'api_disabled');
+      if (projId) setSetting(STORAGE_KEYS.GMAIL_API_PROJECT_ID, projId);
+
+      throw new Error(
+        `Gmail API belum didayakan untuk Google Cloud Project ${projId ? `(${projId})` : ''}. Sila layari ${activationUrl} dan klik 'ENABLE' (Dayakan) untuk mengaktifkannya.`
+      );
+    }
+
     throw new Error(`Gmail API Error (${response.status}): ${errorDetail}`);
   }
 
@@ -397,4 +420,47 @@ export async function manage_labels(messageId, addLabels = [], removeLabels = []
 export async function list_labels() {
   const data = await gmailFetch('/labels');
   return data.labels || [];
+}
+
+/**
+ * 8. checkGmailApiHealth()
+ * Validates whether Gmail API is enabled and reachable with current token
+ */
+export async function checkGmailApiHealth() {
+  const token = getAccessToken();
+  if (!token) {
+    return { ok: false, reason: 'unauthorized', message: 'Token tidak ditemui atau belum bersambung.' };
+  }
+
+  try {
+    const profile = await gmailFetch('/profile');
+    setSetting(STORAGE_KEYS.GMAIL_API_STATUS, 'ready');
+    return { ok: true, profile };
+  } catch (err) {
+    const msg = err.message || '';
+    if (
+      msg.includes('belum didayakan') ||
+      msg.includes('disabled') ||
+      msg.includes('has not been used in project')
+    ) {
+      const match = msg.match(/project[ =:]+(\d+)/i) || msg.match(/\((\d+)\)/);
+      const projId = match ? match[1] : getSetting(STORAGE_KEYS.GMAIL_API_PROJECT_ID, '');
+      const enableUrl = projId
+        ? `https://console.developers.google.com/apis/api/gmail.googleapis.com/overview?project=${projId}`
+        : 'https://console.developers.google.com/apis/api/gmail.googleapis.com/overview';
+
+      setSetting(STORAGE_KEYS.GMAIL_API_STATUS, 'api_disabled');
+      if (projId) setSetting(STORAGE_KEYS.GMAIL_API_PROJECT_ID, projId);
+
+      return {
+        ok: false,
+        reason: 'api_disabled',
+        projectId: projId,
+        enableUrl,
+        message: err.message
+      };
+    }
+
+    return { ok: false, reason: 'error', message: err.message };
+  }
 }

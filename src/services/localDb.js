@@ -22,6 +22,11 @@ export const STORAGE_KEYS = {
   WEBHOOK_URL: 'malas_webhook_url',
   USER_PROFILE: 'malas_user_profile',
   AUTO_SEND_HEADLESS: 'malas_auto_send_headless',
+  AI_MODELS_CACHE: 'malas_ai_models_cache',
+  AI_KEY_STATUS: 'malas_ai_key_status', // 'connected' | 'invalid' | 'disconnected'
+  AI_LAST_CHECKED: 'malas_ai_last_checked',
+  GMAIL_API_STATUS: 'malas_gmail_api_status', // 'ready' | 'api_disabled' | 'unknown'
+  GMAIL_API_PROJECT_ID: 'malas_gmail_api_project_id',
 };
 
 export const SESSION_KEYS = {
@@ -118,6 +123,43 @@ export function getSetting(key, defaultValue = '') {
   }
 }
 
+let settingsListeners = [];
+
+export function subscribeSettings(callback) {
+  settingsListeners.push(callback);
+  return () => {
+    settingsListeners = settingsListeners.filter((cb) => cb !== callback);
+  };
+}
+
+export function notifySettingsChanged(key, value) {
+  settingsListeners.forEach((cb) => {
+    try {
+      cb(key, value);
+    } catch (e) {
+      console.warn('Error in settings listener:', e);
+    }
+  });
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(
+      new CustomEvent('malas_settings_changed', { detail: { key, value } })
+    );
+  }
+}
+
+// Cross-tab synchronization
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (e) => {
+    if (e.key && Object.values(STORAGE_KEYS).includes(e.key)) {
+      let val = e.newValue;
+      try {
+        val = JSON.parse(e.newValue);
+      } catch {}
+      notifySettingsChanged(e.key, val);
+    }
+  });
+}
+
 export function setSetting(key, value) {
   try {
     if (typeof value === 'object') {
@@ -125,8 +167,18 @@ export function setSetting(key, value) {
     } else {
       localStorage.setItem(key, String(value));
     }
+    notifySettingsChanged(key, value);
   } catch (err) {
     console.warn(`Error writing localStorage for ${key}:`, err);
+  }
+}
+
+export function removeSetting(key) {
+  try {
+    localStorage.removeItem(key);
+    notifySettingsChanged(key, null);
+  } catch (err) {
+    console.warn(`Error removing localStorage for ${key}:`, err);
   }
 }
 

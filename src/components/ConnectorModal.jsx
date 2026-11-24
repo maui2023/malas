@@ -25,6 +25,7 @@ import {
   disconnectWorkspace,
   AUTH_STATUS
 } from '../services/googleAuth';
+import { checkGmailApiHealth } from '../services/gmailApi';
 
 export default function ConnectorModal({ isOpen, onClose, onAuthChange }) {
   if (!isOpen) return null;
@@ -39,6 +40,20 @@ export default function ConnectorModal({ isOpen, onClose, onAuthChange }) {
   const [authStatus, setAuthStatus] = useState(AUTH_STATUS.DISCONNECTED);
   const [remainingTime, setRemainingTime] = useState(0);
   const [userProfile, setUserProfile] = useState(null);
+  const [gmailHealth, setGmailHealth] = useState(null);
+  const [isCheckingGmail, setIsCheckingGmail] = useState(false);
+
+  const performGmailHealthCheck = async () => {
+    setIsCheckingGmail(true);
+    try {
+      const res = await checkGmailApiHealth();
+      setGmailHealth(res);
+    } catch {
+      // ignore
+    } finally {
+      setIsCheckingGmail(false);
+    }
+  };
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -51,8 +66,13 @@ export default function ConnectorModal({ isOpen, onClose, onAuthChange }) {
     setClientId(savedClientId);
     setSelectedScopes(savedScopes);
     setUserProfile(profile);
-    setAuthStatus(getAuthStatus());
+    const currentStatus = getAuthStatus();
+    setAuthStatus(currentStatus);
     setRemainingTime(getTokenRemainingSeconds());
+
+    if (currentStatus === AUTH_STATUS.CONNECTED) {
+      performGmailHealthCheck();
+    }
   }, [isOpen]);
 
   const copyOriginToClipboard = () => {
@@ -86,14 +106,24 @@ export default function ConnectorModal({ isOpen, onClose, onAuthChange }) {
 
     try {
       await requestToken({ prompt: 'consent' });
-      setSuccessMessage('Successfully connected to Google Workspace!');
       setAuthStatus(AUTH_STATUS.CONNECTED);
       const profile = getSetting(STORAGE_KEYS.USER_PROFILE, null);
       setUserProfile(profile);
+
+      // Verify Gmail API status immediately
+      const health = await checkGmailApiHealth();
+      setGmailHealth(health);
+
       if (onAuthChange) onAuthChange();
-      setTimeout(() => {
-        onClose();
-      }, 1200);
+
+      if (!health.ok && health.reason === 'api_disabled') {
+        setSuccessMessage('Akaun Google bersambung! Sila klik butang di bawah untuk mendayakan Gmail API di Google Cloud Console.');
+      } else {
+        setSuccessMessage('Berjaya bersambung ke Google Workspace & Gmail API aktif!');
+        setTimeout(() => {
+          onClose();
+        }, 1200);
+      }
     } catch (err) {
       console.error('Connection error:', err);
       setErrorMessage(err.message || 'Authorization failed. Check your Client ID & Authorized Origins.');
@@ -144,19 +174,31 @@ export default function ConnectorModal({ isOpen, onClose, onAuthChange }) {
         <div className="mt-4 p-4 rounded-xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-slate-950/60 border-slate-800">
           <div className="flex items-center gap-3">
             <div className={`w-3.5 h-3.5 rounded-full ${
-              authStatus === AUTH_STATUS.CONNECTED ? 'bg-emerald-500 animate-pulse' :
+              authStatus === AUTH_STATUS.CONNECTED && gmailHealth?.reason !== 'api_disabled' ? 'bg-emerald-500 animate-pulse' :
+              authStatus === AUTH_STATUS.CONNECTED && gmailHealth?.reason === 'api_disabled' ? 'bg-amber-400' :
               authStatus === AUTH_STATUS.EXPIRED ? 'bg-amber-500' : 'bg-slate-600'
             }`} />
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-semibold text-sm">
-                  {authStatus === AUTH_STATUS.CONNECTED ? 'Connected' :
+                  {authStatus === AUTH_STATUS.CONNECTED ? 'Google Account Connected' :
                    authStatus === AUTH_STATUS.EXPIRED ? 'Token Expired' : 'Not Connected'}
                 </span>
                 {authStatus === AUTH_STATUS.CONNECTED && (
                   <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">
                     {formatRemaining(remainingTime)}
                   </span>
+                )}
+                {authStatus === AUTH_STATUS.CONNECTED && gmailHealth && (
+                  gmailHealth.ok ? (
+                    <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center gap-1 font-medium">
+                      <Check className="w-3 h-3" /> Gmail API Active
+                    </span>
+                  ) : gmailHealth.reason === 'api_disabled' ? (
+                    <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/30 flex items-center gap-1 font-medium">
+                      <AlertTriangle className="w-3 h-3 text-amber-400" /> Gmail API Perlu Didayakan
+                    </span>
+                  ) : null
                 )}
               </div>
               {userProfile && (
@@ -167,24 +209,38 @@ export default function ConnectorModal({ isOpen, onClose, onAuthChange }) {
             </div>
           </div>
 
-          {authStatus === AUTH_STATUS.CONNECTED ? (
-            <button
-              onClick={handleDisconnect}
-              className="px-3 py-1.5 text-xs text-rose-400 hover:bg-rose-500/10 border border-rose-500/20 rounded-lg flex items-center gap-1.5 transition"
-            >
-              <LogOut className="w-3.5 h-3.5" /> Disconnect
-            </button>
-          ) : (
-            authStatus === AUTH_STATUS.EXPIRED && (
+          <div className="flex items-center gap-2">
+            {authStatus === AUTH_STATUS.CONNECTED && (
               <button
-                onClick={handleSaveAndConnect}
-                disabled={isConnecting}
-                className="px-3 py-1.5 text-xs text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 rounded-lg flex items-center gap-1.5 transition"
+                onClick={performGmailHealthCheck}
+                disabled={isCheckingGmail}
+                title="Semak status Gmail API"
+                className="px-2.5 py-1.5 text-xs text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg flex items-center gap-1 transition"
               >
-                <RefreshCw className={`w-3.5 h-3.5 ${isConnecting ? 'animate-spin' : ''}`} /> Reconnect
+                <RefreshCw className={`w-3.5 h-3.5 ${isCheckingGmail ? 'animate-spin text-emerald-400' : ''}`} />
+                <span className="hidden sm:inline">Semak Status</span>
               </button>
-            )
-          )}
+            )}
+
+            {authStatus === AUTH_STATUS.CONNECTED ? (
+              <button
+                onClick={handleDisconnect}
+                className="px-3 py-1.5 text-xs text-rose-400 hover:bg-rose-500/10 border border-rose-500/20 rounded-lg flex items-center gap-1.5 transition"
+              >
+                <LogOut className="w-3.5 h-3.5" /> Disconnect
+              </button>
+            ) : (
+              authStatus === AUTH_STATUS.EXPIRED && (
+                <button
+                  onClick={handleSaveAndConnect}
+                  disabled={isConnecting}
+                  className="px-3 py-1.5 text-xs text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 rounded-lg flex items-center gap-1.5 transition"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isConnecting ? 'animate-spin' : ''}`} /> Reconnect
+                </button>
+              )
+            )}
+          </div>
         </div>
 
         {/* Step 1: Origin Helper */}
@@ -243,6 +299,32 @@ export default function ConnectorModal({ isOpen, onClose, onAuthChange }) {
           <p className="text-xs text-slate-400">
             Stored locally in your browser’s <code>localStorage</code>. Never sent to any external server.
           </p>
+
+          {/* Project-specific Gmail API Activation Banner */}
+          {clientId.trim().match(/^(\d+)/)?.[1] && (
+            <div className="mt-3 p-3.5 rounded-xl bg-gradient-to-r from-amber-950/40 to-slate-900 border border-amber-500/30 text-xs space-y-2">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-1.5 font-bold text-amber-300">
+                    <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                    <span>Langkah Wajib: Dayakan Gmail API (Projek {clientId.trim().match(/^(\d+)/)[1]})</span>
+                  </div>
+                  <p className="text-[11px] text-slate-300">
+                    Selain OAuth, Google Cloud memerlukan anda menekan butang <b>Enable</b> untuk Gmail API bagi membolehkan AI membaca atau mengurus emel.
+                  </p>
+                </div>
+                <a
+                  href={`https://console.developers.google.com/apis/api/gmail.googleapis.com/overview?project=${clientId.trim().match(/^(\d+)/)[1]}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-3 py-2 shrink-0 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-md shadow-amber-500/20 transition active:scale-95"
+                >
+                  <span>Dayakan Gmail API</span>
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Step 3: Granular Scope Checkboxes */}

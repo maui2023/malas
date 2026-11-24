@@ -12,6 +12,7 @@ import {
   STORAGE_KEYS,
   getSetting,
   getTokenRemainingSeconds,
+  subscribeSettings,
 } from '../services/localDb';
 import {
   getAuthStatus,
@@ -31,21 +32,31 @@ export default function Header({
   const [userProfile, setUserProfile] = useState(null);
   const [aiProvider, setAiProvider] = useState('gemini');
   const [hasApiKey, setHasApiKey] = useState(false);
+  const [aiKeyStatus, setAiKeyStatus] = useState('disconnected');
 
   useEffect(() => {
-    const unsubscribe = subscribeAuthStatus((status, remaining) => {
+    const unsubscribeAuth = subscribeAuthStatus((status, remaining) => {
       setAuthStatus(status);
       setTokenRemaining(remaining);
       setUserProfile(getSetting(STORAGE_KEYS.USER_PROFILE, null));
     });
 
     const updateAi = () => {
+      const key = getSetting(STORAGE_KEYS.AI_API_KEY, '');
       setAiProvider(getSetting(STORAGE_KEYS.AI_PROVIDER, 'gemini'));
-      setHasApiKey(Boolean(getSetting(STORAGE_KEYS.AI_API_KEY, '')));
+      setHasApiKey(Boolean(key));
+      setAiKeyStatus(getSetting(STORAGE_KEYS.AI_KEY_STATUS, key ? 'connected' : 'disconnected'));
     };
 
+    const unsubscribeSettings = subscribeSettings(() => {
+      updateAi();
+    });
+
     updateAi();
-    return () => unsubscribe();
+    return () => {
+      unsubscribeAuth();
+      unsubscribeSettings();
+    };
   }, []);
 
   const formatRemaining = (seconds) => {
@@ -139,7 +150,13 @@ export default function Header({
           <span className="font-semibold text-slate-200 capitalize">
             {aiProvider}
           </span>
-          <div className={`w-2 h-2 rounded-full ${hasApiKey ? 'bg-emerald-400' : 'bg-rose-500'}`} />
+          <div
+            className={`w-2 h-2 rounded-full ${
+              hasApiKey && aiKeyStatus !== 'invalid'
+                ? 'bg-emerald-400 animate-pulse'
+                : 'bg-rose-500'
+            }`}
+          />
         </button>
 
         {/* Export / Import Button */}
