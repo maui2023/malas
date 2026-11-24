@@ -66,7 +66,7 @@ export default function Sidebar({ onSelectPrompt, onNewChat }) {
   }, []);
 
   return (
-    <aside className="w-64 md:w-72 bg-slate-950 border-r border-slate-800/80 flex flex-col justify-between shrink-0 h-[calc(100vh-4rem)] overflow-y-auto">
+    <aside className="hidden md:flex flex-col justify-between w-64 lg:w-72 bg-slate-950 border-r border-slate-800/80 shrink-0 h-full overflow-y-auto">
       
       {/* Top action: New Session */}
       <div className="p-4 space-y-4">

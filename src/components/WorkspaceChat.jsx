@@ -26,7 +26,8 @@ export default function WorkspaceChat({
   externalPrompt,
   onClearExternalPrompt,
   onOpenConnector,
-  onOpenSettings
+  onOpenSettings,
+  onRunningChange
 }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
@@ -60,7 +61,12 @@ export default function WorkspaceChat({
     loadHistory();
   }, []);
 
-  // Trigger from sidebar workflow
+  // Sync running state to parent if needed
+  useEffect(() => {
+    if (onRunningChange) onRunningChange(isRunning);
+  }, [isRunning, onRunningChange]);
+
+  // Trigger from sidebar or mobile workflow preset
   useEffect(() => {
     if (externalPrompt) {
       setInput(externalPrompt);
@@ -86,7 +92,7 @@ export default function WorkspaceChat({
       const warningMsg = {
         id: Date.now(),
         role: 'assistant',
-        content: `⚠️ **Google Workspace belum disambungkan atau token telah tamat tempoh.**\n\nSila klik butang **Connect Google** di bahagian atas atau [Buka Tetapan Connector] untuk sambungkan akaun Gmail anda.`,
+        content: `⚠️ **Google Workspace belum disambungkan atau token telah tamat tempoh.**\n\nSila klik butang **Connect Google** di bahagian atas atau buka menu Sambungan untuk sambungkan akaun Gmail anda.`,
         actionCards: []
       };
       setMessages(prev => [...prev, warningMsg]);
@@ -165,34 +171,34 @@ export default function WorkspaceChat({
   };
 
   return (
-    <div className="flex-1 flex flex-col h-[calc(100vh-4rem)] bg-slate-900/40 relative overflow-hidden">
+    <div className="flex-1 flex flex-col h-full w-full bg-slate-900/40 relative overflow-hidden">
       
       {/* Messages Scroll Area */}
-      <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
+      <div className="flex-1 overflow-y-auto p-3.5 sm:p-4 md:p-6 space-y-4 md:space-y-6">
         
         {messages.map((msg) => (
           <div
             key={msg.id}
-            className={`flex items-start gap-3 max-w-3xl ${
+            className={`flex items-start gap-2.5 sm:gap-3 max-w-[92%] sm:max-w-xl md:max-w-2xl lg:max-w-3xl ${
               msg.role === 'user' ? 'ml-auto flex-row-reverse' : 'mr-auto'
             }`}
           >
             {/* Avatar */}
-            <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 text-sm shadow-md ${
+            <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-xl flex items-center justify-center shrink-0 text-xs sm:text-sm shadow-md mt-0.5 ${
               msg.role === 'user'
                 ? 'bg-slate-700 text-slate-200'
                 : 'bg-gradient-to-tr from-emerald-600 to-teal-500 text-white'
             }`}>
-              {msg.role === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
+              {msg.role === 'user' ? <User className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> : <Bot className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
             </div>
 
             {/* Bubble */}
-            <div className={`rounded-2xl p-4 text-xs md:text-sm leading-relaxed ${
+            <div className={`rounded-2xl p-3.5 sm:p-4 text-xs sm:text-sm leading-relaxed overflow-hidden break-words ${
               msg.role === 'user'
                 ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/10'
                 : 'bg-slate-900/90 border border-slate-800 text-slate-200 shadow-md'
             }`}>
-              {/* Message text with basic Markdown styling */}
+              {/* Message text with basic Markdown formatting */}
               <div className="whitespace-pre-wrap space-y-2">
                 {msg.content}
               </div>
@@ -211,7 +217,7 @@ export default function WorkspaceChat({
 
         {/* Real-time Agent Step Indicator */}
         {isRunning && currentStep && (
-          <div className="flex items-center gap-3 mr-auto max-w-xl p-3 rounded-2xl bg-slate-950/80 border border-emerald-500/30 text-emerald-300 text-xs shadow-lg animate-pulse">
+          <div className="flex items-center gap-2.5 mr-auto max-w-md p-3 rounded-2xl bg-slate-950/80 border border-emerald-500/30 text-emerald-300 text-xs shadow-lg animate-pulse">
             <Loader2 className="w-4 h-4 animate-spin text-emerald-400 shrink-0" />
             <div className="flex-1 truncate font-mono">
               {currentStep.message || 'Processing...'}
@@ -223,10 +229,10 @@ export default function WorkspaceChat({
       </div>
 
       {/* Input & Quick Chips Area */}
-      <div className="p-4 bg-slate-950/90 border-t border-slate-800/80 backdrop-blur-md">
+      <div className="p-3 sm:p-4 bg-slate-950/95 border-t border-slate-800/80 backdrop-blur-md shrink-0">
         
         {/* Quick Chips */}
-        <div className="flex items-center gap-2 overflow-x-auto pb-2.5 mb-2 scrollbar-none">
+        <div className="flex items-center gap-2 overflow-x-auto pb-2 mb-2 scrollbar-none">
           <span className="text-[10px] font-bold uppercase text-slate-500 tracking-wider flex items-center gap-1 shrink-0">
             <Sparkles className="w-3 h-3 text-emerald-400" />
             Quick:
@@ -244,21 +250,22 @@ export default function WorkspaceChat({
         </div>
 
         {/* Input Bar */}
-        <div className="relative flex items-end gap-2 bg-slate-900 border border-slate-800 focus-within:border-emerald-500/60 rounded-2xl p-2 transition shadow-inner">
+        <div className="relative flex items-end gap-2 bg-slate-900 border border-slate-800 focus-within:border-emerald-500/60 rounded-2xl p-1.5 sm:p-2 transition shadow-inner">
           <textarea
             ref={textareaRef}
             rows={1}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Tulis arahan emel (cth: 'Tolong ringkaskan emel unread harini dan listkan apa urgent')..."
-            className="w-full bg-transparent text-slate-100 placeholder-slate-500 text-xs md:text-sm p-1.5 outline-none resize-none max-h-32 min-h-[38px]"
+            placeholder="Tulis arahan emel (cth: 'Ringkaskan emel unread harini')..."
+            className="w-full bg-transparent text-slate-100 placeholder-slate-500 text-xs sm:text-sm p-1.5 outline-none resize-none max-h-32 min-h-[38px]"
           />
 
           <button
             onClick={() => handleSend()}
             disabled={!input.trim() || isRunning}
             className="p-2.5 bg-emerald-500 hover:bg-emerald-400 active:scale-95 disabled:opacity-30 disabled:pointer-events-none text-slate-950 rounded-xl transition shadow-md shadow-emerald-500/20 shrink-0"
+            title="Hantar Arahan"
           >
             {isRunning ? (
               <Loader2 className="w-4 h-4 animate-spin" />
@@ -268,9 +275,10 @@ export default function WorkspaceChat({
           </button>
         </div>
 
-        <div className="flex items-center justify-between mt-2 text-[10px] text-slate-500 px-1">
-          <span>Enter untuk hantar &bull; Shift + Enter untuk baris baru</span>
-          <span>100% Client-Side Direct Execution</span>
+        <div className="flex items-center justify-between mt-1.5 text-[10px] text-slate-500 px-1">
+          <span className="hidden sm:inline">Enter untuk hantar &bull; Shift + Enter untuk baris baru</span>
+          <span className="sm:hidden">100% Client-Side Agent</span>
+          <span className="hidden sm:inline">100% Client-Side Direct Execution</span>
         </div>
 
       </div>
