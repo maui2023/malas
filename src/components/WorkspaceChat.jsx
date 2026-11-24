@@ -1,4 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { marked } from 'marked';
+import DOMPurify from 'dompurify';
 import {
   Send,
   Loader2,
@@ -30,7 +32,26 @@ function extractConsoleUrl(text) {
   return match ? match[0] : null;
 }
 
-function renderFormattedContent(text) {
+// Ensure all sanitized links open safely in a new tab
+DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+  if (node.tagName === 'A') {
+    node.setAttribute('target', '_blank');
+    node.setAttribute('rel', 'noopener noreferrer');
+  }
+});
+
+function renderMarkdownHtml(text) {
+  if (!text) return '';
+  const rawHtml = marked.parse(text, {
+    breaks: true,
+    gfm: true
+  });
+  return DOMPurify.sanitize(rawHtml, {
+    ADD_ATTR: ['target', 'rel']
+  });
+}
+
+function renderUserContent(text) {
   if (!text) return null;
   const urlRegex = /(https?:\/\/[^\s<)]+)/g;
   const parts = text.split(urlRegex);
@@ -43,7 +64,7 @@ function renderFormattedContent(text) {
           href={part}
           target="_blank"
           rel="noreferrer"
-          className="text-emerald-400 hover:text-emerald-300 underline font-medium break-all inline-flex items-center gap-0.5"
+          className="text-emerald-50 hover:text-white underline decoration-emerald-200/80 font-medium break-all inline-flex items-center gap-0.5"
         >
           <span>{part}</span>
           <ExternalLink className="w-3 h-3 inline shrink-0" />
@@ -238,15 +259,22 @@ export default function WorkspaceChat({
             </div>
 
             {/* Bubble */}
-            <div className={`rounded-2xl p-3.5 sm:p-4 text-xs sm:text-sm leading-relaxed overflow-hidden break-words ${
+            <div className={`min-w-0 rounded-2xl p-3.5 sm:p-4 text-xs sm:text-sm leading-relaxed overflow-hidden break-words ${
               msg.role === 'user'
-                ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/10'
-                : 'bg-slate-900/90 border border-slate-800 text-slate-200 shadow-md'
+                ? 'bg-emerald-600 text-white rounded-tr-sm shadow-lg shadow-emerald-600/10'
+                : 'bg-slate-900/90 border border-slate-800 text-slate-200 rounded-tl-sm shadow-md'
             }`}>
-              {/* Message text with basic Markdown & link formatting */}
-              <div className="whitespace-pre-wrap space-y-2">
-                {renderFormattedContent(msg.content)}
-              </div>
+              {/* Message text: plain + links for user, sanitized Markdown for assistant */}
+              {msg.role === 'user' ? (
+                <div className="whitespace-pre-wrap break-words">
+                  {renderUserContent(msg.content)}
+                </div>
+              ) : (
+                <div
+                  className="chat-markdown prose prose-invert prose-sm max-w-none break-words"
+                  dangerouslySetInnerHTML={{ __html: renderMarkdownHtml(msg.content) }}
+                />
+              )}
 
               {/* Detected Gmail API Disabled Warning Card */}
               {(() => {
