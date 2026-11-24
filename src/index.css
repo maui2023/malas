@@ -3,10 +3,30 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --sat: env(safe-area-inset-top, 59px);
+    --sab: env(safe-area-inset-bottom, 34px);
+    --sal: env(safe-area-inset-left, 0px);
+    --sar: env(safe-area-inset-right, 0px);
+  }
+
   body {
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
     -webkit-tap-highlight-color: transparent;
   }
+}
+
+/* iOS Safe Area Helper Utilities */
+.pt-safe-top {
+  padding-top: max(59px, env(safe-area-inset-top, 59px));
+}
+
+.pb-safe-bottom {
+  padding-bottom: max(20px, env(safe-area-inset-bottom, 20px));
+}
+
+.h-safe-top {
+  height: max(59px, env(safe-area-inset-top, 59px));
 }
 
 /* Custom scrollbar for sleek dark workspace */

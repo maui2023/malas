@@ -1,7 +1,12 @@
 import React from 'react';
 import { MessageSquare, Sparkles, Database, Settings } from 'lucide-react';
 
-export default function BottomNav({ activeTab, onTabChange, isRunning = false }) {
+export default function BottomNav({
+  activeTab,
+  onTabChange,
+  isRunning = false,
+  isSimulatedIphone = false,
+}) {
   const navItems = [
     {
       id: 'chat',
@@ -27,8 +32,15 @@ export default function BottomNav({ activeTab, onTabChange, isRunning = false })
   ];
 
   return (
-    <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-slate-950/95 backdrop-blur-xl border-t border-slate-800/90 pb-[env(safe-area-inset-bottom,0px)] shadow-2xl">
-      <div className="grid grid-cols-4 h-16 max-w-md mx-auto items-center px-1">
+    <nav
+      className={`${
+        isSimulatedIphone ? 'absolute' : 'fixed md:hidden'
+      } bottom-0 left-0 right-0 z-40 bg-slate-950/95 backdrop-blur-xl border-t border-slate-800/90 shadow-2xl transition-all`}
+      style={{
+        paddingBottom: 'max(10px, env(safe-area-inset-bottom, 10px))'
+      }}
+    >
+      <div className="grid grid-cols-4 h-14 max-w-md mx-auto items-center px-1">
         {navItems.map((item) => {
           const Icon = item.icon;
           const isActive = activeTab === item.id;
@@ -70,6 +82,9 @@ export default function BottomNav({ activeTab, onTabChange, isRunning = false })
           );
         })}
       </div>
+
+      {/* iOS Home Indicator Pill */}
+      <div className="w-32 h-1 bg-slate-600/50 rounded-full mx-auto mb-1 mt-0.5" aria-hidden="true" />
     </nav>
   );
 }
