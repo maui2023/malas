@@ -161,12 +161,17 @@ function buildMimeMessage({ to, subject, body, inReplyTo, references }) {
 // ==========================================
 
 /**
- * 1. list_emails(query, maxResults)
- * Search and fetch emails matching Gmail query syntax (e.g. 'is:unread', 'newer_than:2d')
+ * 1. list_emails(query, maxResults, includeSpamTrash)
+ * Search and fetch emails matching Gmail query syntax (e.g. 'is:unread', 'newer_than:2d', 'in:spam')
  */
-export async function list_emails(query = 'is:unread', maxResults = 10) {
+export async function list_emails(query = 'is:unread', maxResults = 10, includeSpamTrash = false) {
   const q = encodeURIComponent(query);
-  const data = await gmailFetch(`/messages?q=${q}&maxResults=${Math.min(maxResults, 25)}`);
+  const needsSpamTrash =
+    includeSpamTrash || /\b(in|is|label):(spam|trash)\b/i.test(query);
+  const spamTrashParam = needsSpamTrash ? '&includeSpamTrash=true' : '';
+  const data = await gmailFetch(
+    `/messages?q=${q}&maxResults=${Math.min(maxResults, 25)}${spamTrashParam}`
+  );
   
   if (!data.messages || data.messages.length === 0) {
     return {
@@ -411,6 +416,198 @@ export async function manage_labels(messageId, addLabels = [], removeLabels = []
     messageId: response.id,
     labelIds: response.labelIds || []
   };
+}
+
+/**
+ * Helper: Paginate through Gmail messages.list to collect all matching message IDs
+ */
+async function listAllMessageIds({
+  query = '',
+  labelIds = [],
+  includeSpamTrash = false,
+  maxTotal = 2000
+} = {}) {
+  const ids = [];
+  let pageToken = null;
+  const needsSpamTrash =
+    includeSpamTrash ||
+    labelIds.some(l => l === 'SPAM' || l === 'TRASH') ||
+    /\b(in|is|label):(spam|trash)\b/i.test(query);
+
+  do {
+    const params = new URLSearchParams();
+    params.set('maxResults', '500');
+    if (query) params.set('q', query);
+    if (needsSpamTrash) params.set('includeSpamTrash', 'true');
+    if (pageToken) params.set('pageToken', pageToken);
+    for (const labelId of labelIds) {
+      params.append('labelIds', labelId);
+    }
+
+    const data = await gmailFetch(`/messages?${params.toString()}`);
+    if (data.messages && data.messages.length > 0) {
+      for (const m of data.messages) {
+        ids.push(m.id);
+        if (ids.length >= maxTotal) break;
+      }
+    }
+    pageToken = ids.length < maxTotal ? data.nextPageToken : null;
+  } while (pageToken);
+
+  return ids;
+}
+
+function isInsufficientScopeError(err) {
+  const msg = (err?.message || '').toLowerCase();
+  return (
+    msg.includes('insufficient') ||
+    msg.includes('permission') ||
+    msg.includes('403') ||
+    msg.includes('scope')
+  );
+}
+
+/**
+ * 6b. trash_emails({ messageIds, query })
+ * Moves matching or specified emails to Trash using batchModify (requires gmail.modify)
+ */
+export async function trash_emails({ messageIds = [], query = '' } = {}) {
+  let targetIds = Array.isArray(messageIds) ? [...messageIds] : [];
+  if (query && targetIds.length === 0) {
+    targetIds = await listAllMessageIds({ query });
+  }
+
+  if (targetIds.length === 0) {
+    return {
+      success: true,
+      count: 0,
+      action: 'trash',
+      message: 'No matching emails found to move to Trash.'
+    };
+  }
+
+  try {
+    for (let i = 0; i < targetIds.length; i += 1000) {
+      const chunk = targetIds.slice(i, i + 1000);
+      await gmailFetch('/messages/batchModify', {
+        method: 'POST',
+        body: JSON.stringify({
+          ids: chunk,
+          addLabelIds: ['TRASH'],
+          removeLabelIds: ['INBOX', 'SPAM']
+        })
+      });
+    }
+  } catch (err) {
+    if (isInsufficientScopeError(err)) {
+      throw new Error(
+        `Permission denied: Your Google connection needs the "gmail.modify" scope to move emails to Trash. Please open Connector Settings, check "Modify / Archive / Trash / Mark as read", and click Reconnect.`
+      );
+    }
+    throw err;
+  }
+
+  try {
+    await db.audit_logs.add({
+      timestamp: new Date().toISOString(),
+      action: 'trash_emails',
+      details: { count: targetIds.length, query: query || null },
+      status: 'completed'
+    });
+  } catch (e) {}
+
+  return {
+    success: true,
+    count: targetIds.length,
+    action: 'moved_to_trash',
+    message: `Moved ${targetIds.length} email(s) to Trash.`
+  };
+}
+
+/**
+ * 6c. delete_emails({ messageIds, query, permanent })
+ * Permanently deletes emails (requires https://mail.google.com/) or moves them to Trash as fallback
+ */
+export async function delete_emails({ messageIds = [], query = '', permanent = true } = {}) {
+  let targetIds = Array.isArray(messageIds) ? [...messageIds] : [];
+  if (query && targetIds.length === 0) {
+    targetIds = await listAllMessageIds({ query });
+  }
+
+  if (targetIds.length === 0) {
+    return {
+      success: true,
+      count: 0,
+      action: permanent ? 'delete' : 'trash',
+      message: 'No matching emails found to delete.'
+    };
+  }
+
+  if (!permanent) {
+    return await trash_emails({ messageIds: targetIds });
+  }
+
+  try {
+    for (let i = 0; i < targetIds.length; i += 1000) {
+      const chunk = targetIds.slice(i, i + 1000);
+      await gmailFetch('/messages/batchDelete', {
+        method: 'POST',
+        body: JSON.stringify({ ids: chunk })
+      });
+    }
+
+    try {
+      await db.audit_logs.add({
+        timestamp: new Date().toISOString(),
+        action: 'delete_emails_permanent',
+        details: { count: targetIds.length, query: query || null },
+        status: 'completed'
+      });
+    } catch (e) {}
+
+    return {
+      success: true,
+      count: targetIds.length,
+      action: 'permanently_deleted',
+      message: `Permanently deleted ${targetIds.length} email(s).`
+    };
+  } catch (err) {
+    if (isInsufficientScopeError(err)) {
+      // Fall back to moving to Trash via gmail.modify if full scope is not granted
+      const trashRes = await trash_emails({ messageIds: targetIds });
+      return {
+        ...trashRes,
+        fallbackFromPermanent: true,
+        message: `Moved ${trashRes.count} email(s) out of folder into Trash (permanent delete requires the "Full Gmail Access: https://mail.google.com/" permission in Connector Settings).`
+      };
+    }
+    throw err;
+  }
+}
+
+/**
+ * 6d. empty_spam({ permanent })
+ * Empties all emails in the Gmail SPAM folder
+ */
+export async function empty_spam({ permanent = true } = {}) {
+  const spamIds = await listAllMessageIds({
+    labelIds: ['SPAM'],
+    includeSpamTrash: true
+  });
+
+  if (spamIds.length === 0) {
+    return {
+      success: true,
+      count: 0,
+      action: 'empty_spam',
+      message: 'SPAM folder is already empty (0 emails found).'
+    };
+  }
+
+  return await delete_emails({
+    messageIds: spamIds,
+    permanent
+  });
 }
 
 /**

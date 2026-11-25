@@ -19,7 +19,11 @@ export const AGENT_TOOLS_GEMINI = [
         },
         maxResults: {
           type: 'INTEGER',
-          description: 'Maximum number of emails to retrieve (1 to 20). Default is 10.'
+          description: 'Maximum number of emails to retrieve (1 to 25). Default is 10.'
+        },
+        includeSpamTrash: {
+          type: 'BOOLEAN',
+          description: 'Set to true when searching SPAM or TRASH folders.'
         }
       },
       required: []
@@ -136,6 +140,62 @@ export const AGENT_TOOLS_GEMINI = [
       },
       required: ['messageId']
     }
+  },
+  {
+    name: 'trash_emails',
+    description: 'Move emails to Trash in bulk by messageIds or a Gmail search query (e.g., "from:newsletter@example.com", "in:spam").',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        messageIds: {
+          type: 'ARRAY',
+          items: { type: 'STRING' },
+          description: 'Optional array of Gmail message IDs to move to Trash.'
+        },
+        query: {
+          type: 'STRING',
+          description: 'Optional Gmail search query to match emails to move to Trash (e.g., "category:promotions older_than:30d").'
+        }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'delete_emails',
+    description: 'Delete emails permanently (or move to Trash if full Gmail scope is not enabled) by messageIds or Gmail search query.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        messageIds: {
+          type: 'ARRAY',
+          items: { type: 'STRING' },
+          description: 'Optional array of Gmail message IDs to delete.'
+        },
+        query: {
+          type: 'STRING',
+          description: 'Optional Gmail search query to match emails to delete.'
+        },
+        permanent: {
+          type: 'BOOLEAN',
+          description: 'True to permanently delete immediately (default true), false to move to Trash.'
+        }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'empty_spam',
+    description: 'Empty the entire Gmail SPAM folder (fetches all SPAM emails with pagination and deletes them permanently, or moves them to Trash if only gmail.modify scope is enabled).',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        permanent: {
+          type: 'BOOLEAN',
+          description: 'True to permanently delete all SPAM emails (default true), false to move to Trash.'
+        }
+      },
+      required: []
+    }
   }
 ];
 
@@ -166,7 +226,11 @@ export const AGENT_TOOLS_OPENAI = AGENT_TOOLS_GEMINI.map(tool => ({
 async function executeLocalTool(toolName, args, { isHeadless = false } = {}) {
   switch (toolName) {
     case 'list_emails':
-      return await gmail.list_emails(args.query || 'is:unread', args.maxResults || 10);
+      return await gmail.list_emails(
+        args.query || 'is:unread',
+        args.maxResults || 10,
+        Boolean(args.includeSpamTrash)
+      );
 
     case 'get_email_thread':
       return await gmail.get_email_thread(args.threadId);
@@ -202,6 +266,24 @@ async function executeLocalTool(toolName, args, { isHeadless = false } = {}) {
 
     case 'manage_labels':
       return await gmail.manage_labels(args.messageId, args.addLabels || [], args.removeLabels || []);
+
+    case 'trash_emails':
+      return await gmail.trash_emails({
+        messageIds: args.messageIds || [],
+        query: args.query || ''
+      });
+
+    case 'delete_emails':
+      return await gmail.delete_emails({
+        messageIds: args.messageIds || [],
+        query: args.query || '',
+        permanent: args.permanent !== false
+      });
+
+    case 'empty_spam':
+      return await gmail.empty_spam({
+        permanent: args.permanent !== false
+      });
 
     default:
       throw new Error(`Unknown tool: ${toolName}`);
@@ -292,6 +374,20 @@ async function callOpenAI({ apiKey, model, endpoint, messages, systemInstruction
   return await res.json();
 }
 
+function buildFallbackSummary(executedTools) {
+  if (!executedTools || executedTools.length === 0) {
+    return 'Tiada tindakan dilaksanakan kerana AI tidak memulangkan jawapan atau mencapai had langkah.';
+  }
+  const lines = executedTools.map((t) => {
+    if (t.error) {
+      return `- ❌ **${t.tool}**: ${t.error}`;
+    }
+    const msg = t.result?.message || (t.result?.count !== undefined ? `${t.result.count} item(s)` : 'OK');
+    return `- ✅ **${t.tool}**: ${msg}`;
+  });
+  return `Ringkasan pelaksanaan alat:\n${lines.join('\n')}`;
+}
+
 // ==========================================
 // MAIN AGENT RUNNER LOOP
 // ==========================================
@@ -336,9 +432,10 @@ export async function runAgentWorkflow({
       parts: [{ text: userPrompt }]
     });
 
-    let maxTurns = 6;
+    let maxTurns = 10;
     let turn = 0;
     let finalAnswer = '';
+    const executedTools = [];
 
     while (turn < maxTurns) {
       turn++;
@@ -399,6 +496,7 @@ export async function runAgentWorkflow({
               response: { result: toolResult }
             }
           });
+          executedTools.push({ tool: toolName, result: toolResult });
 
           onStepUpdate({
             type: 'tool_result',
@@ -414,6 +512,7 @@ export async function runAgentWorkflow({
               response: { error: toolErr.message }
             }
           });
+          executedTools.push({ tool: toolName, error: toolErr.message });
           onStepUpdate({
             type: 'tool_error',
             tool: toolName,
@@ -432,7 +531,7 @@ export async function runAgentWorkflow({
 
     onStepUpdate({ type: 'done', message: 'Task complete.' });
     return {
-      content: finalAnswer || 'Completed execution.',
+      content: finalAnswer || buildFallbackSummary(executedTools),
       actionCards
     };
   }
@@ -452,9 +551,10 @@ export async function runAgentWorkflow({
 
     messages.push({ role: 'user', content: userPrompt });
 
-    let maxTurns = 6;
+    let maxTurns = 10;
     let turn = 0;
     let finalAnswer = '';
+    const executedTools = [];
 
     while (turn < maxTurns) {
       turn++;
@@ -518,6 +618,7 @@ export async function runAgentWorkflow({
             tool_call_id: tc.id,
             content: JSON.stringify(toolResult)
           });
+          executedTools.push({ tool: toolName, result: toolResult });
 
           onStepUpdate({
             type: 'tool_result',
@@ -531,6 +632,7 @@ export async function runAgentWorkflow({
             tool_call_id: tc.id,
             content: JSON.stringify({ error: toolErr.message })
           });
+          executedTools.push({ tool: toolName, error: toolErr.message });
           onStepUpdate({
             type: 'tool_error',
             tool: toolName,
@@ -543,7 +645,7 @@ export async function runAgentWorkflow({
 
     onStepUpdate({ type: 'done', message: 'Task complete.' });
     return {
-      content: finalAnswer || 'Completed execution.',
+      content: finalAnswer || buildFallbackSummary(executedTools),
       actionCards
     };
   }

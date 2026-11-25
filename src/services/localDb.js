@@ -74,8 +74,15 @@ export const AVAILABLE_SCOPES = [
   {
     id: 'https://www.googleapis.com/auth/gmail.modify',
     category: 'Gmail',
-    label: 'Modify / Archive / Mark as read',
-    desc: 'Archive newsletters, clean inbox, or mark read',
+    label: 'Modify / Archive / Trash / Mark as read',
+    desc: 'Archive newsletters, move emails/spam to Trash, or mark read',
+    default: false,
+  },
+  {
+    id: 'https://mail.google.com/',
+    category: 'Gmail',
+    label: 'Full Gmail Access (Permanent Delete / Empty Spam)',
+    desc: 'Required to permanently delete emails or empty Spam/Trash immediately',
     default: false,
   },
   {
@@ -105,7 +112,7 @@ Core Directives:
    - Match the professional tone of the sender or use polite, concise business communication.
    - Always prepare the draft using the 'create_draft' tool or present it clearly so the user can review before sending.
 4. SAFETY FIRST: Never send emails directly without explicit user authorization. Propose drafts or request confirmation cards.
-5. If the user asks to clean up or archive promotions, identify spam/newsletters safely.`;
+5. If the user asks to clean up, trash, or delete emails (including emptying the SPAM folder), use 'empty_spam', 'trash_emails', or 'delete_emails' instead of looping 'manage_labels' one by one. Always report the exact number of emails affected or any permission error returned by the tool.`;
 
 // LocalStorage Helpers
 export function getSetting(key, defaultValue = '') {
